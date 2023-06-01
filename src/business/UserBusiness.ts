@@ -5,6 +5,7 @@ import { SignupInputDTO, SignupOutputDTO } from "../dtos/user/signup.dto"
 import { BadRequestError } from "../errors/BadRequestError"
 import { NotFoundError } from "../errors/NotFoundError"
 import { TokenPayload, USER_ROLES, User } from "../models/User"
+import { HashManager } from "../services/HashManager"
 import { IdGenerator } from "../services/IdGenerator"
 import { TokenManager } from "../services/TokenManager"
 
@@ -12,13 +13,23 @@ export class UserBusiness {
   constructor(
     private userDatabase: UserDatabase,
     private idGenerator: IdGenerator,
-    private tokenManager: TokenManager
+    private tokenManager: TokenManager,
+    private hashManager: HashManager
   ) { }
 
-  public getUsers = async (
-    input: GetUsersInputDTO
-  ): Promise<GetUsersOutputDTO> => {
-    const { q } = input
+  public getUsers = async (input: GetUsersInputDTO): Promise<GetUsersOutputDTO> => {
+    
+    const { q, token } = input
+    
+    const payload = this.tokenManager.getPayload(token)   
+    
+    if (!payload) {
+      throw new BadRequestError("Token inválido")
+    }
+
+    if (payload.role !== USER_ROLES.ADMIN) {
+      throw new BadRequestError("Sem autorização")
+    }
 
     const usersDB = await this.userDatabase.findUsers(q)
 
@@ -52,14 +63,15 @@ export class UserBusiness {
     //   throw new BadRequestError("'id' já existe")
     // }
 
-    console.log(this)
     const id = this.idGenerator.generate()
+
+    const hashPassaword = await this.hashManager.hash(password)
 
     const newUser = new User(
       id,
       name,
       email,
-      password,
+      hashPassaword,
       USER_ROLES.NORMAL, // só é possível criar users com contas normais
       new Date().toISOString()
     )
@@ -96,7 +108,11 @@ export class UserBusiness {
       throw new NotFoundError("'email' não encontrado")
     }
 
-    if (password !== userDB.password) {
+    const hashedPassword = userDB.password
+
+    const isPasswordCorrect = await this.hashManager.compare(password, hashedPassword)
+
+    if (!isPasswordCorrect) {
       throw new BadRequestError("'email' ou 'password' incorretos")
     }
 
